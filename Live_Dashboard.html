@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IPTV India - Analytics Dashboard</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+
+        .dashboard-container {
+            display: flex;
+            gap: 30px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .dashboard-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            text-align: center;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            min-width: 250px;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            margin-bottom: 10px;
+            font-weight: 300;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        .count {
+            font-size: 5rem;
+            font-weight: bold;
+            margin: 15px 0;
+        }
+
+        .live-count {
+            text-shadow: 0 0 20px rgba(0, 255, 136, 0.5);
+            color: #00ff88;
+        }
+        
+        .daily-count {
+            text-shadow: 0 0 20px rgba(0, 162, 255, 0.5);
+            color: #00a2ff;
+        }
+
+        .total-count {
+            text-shadow: 0 0 20px rgba(255, 204, 0, 0.5);
+            color: #ffcc00;
+        }
+
+        .status {
+            font-size: 1rem;
+            color: #aaa;
+            margin-top: 20px;
+            text-align: center;
+        }
+
+        .pulse {
+            display: inline-block;
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            background: #00ff88;
+            margin-right: 10px;
+            box-shadow: 0 0 0 0 rgba(0, 255, 136, 1);
+            animation: pulse-animation 2s infinite;
+        }
+
+        @keyframes pulse-animation {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 15px rgba(0, 255, 136, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 255, 136, 0); }
+        }
+    </style>
+</head>
+<body>
+
+    <h2 style="font-weight: 300; letter-spacing: 3px; margin-bottom: 40px;">IPTV INDIA ANALYTICS</h2>
+
+    <div class="dashboard-container">
+        <!-- Live Users -->
+        <div class="dashboard-card">
+            <h1><span class="pulse"></span>Online Now</h1>
+            <div class="count live-count" id="live-count">0</div>
+            <div style="color: #bbb; font-size: 0.9rem;">(Active in last 2 mins)</div>
+        </div>
+
+        <!-- Daily Active Users -->
+        <div class="dashboard-card">
+            <h1>Daily Active</h1>
+            <div class="count daily-count" id="daily-count">0</div>
+            <div style="color: #bbb; font-size: 0.9rem;">(Active in last 24 hours)</div>
+        </div>
+
+        <!-- Total Users -->
+        <div class="dashboard-card">
+            <h1>Total Users</h1>
+            <div class="count total-count" id="total-count">0</div>
+            <div style="color: #bbb; font-size: 0.9rem;">(All time unique installs)</div>
+        </div>
+    </div>
+    
+    <!-- Active Users Table -->
+    <div class="dashboard-card" style="width: 90%; max-width: 800px; margin-top: 20px; text-align: left;">
+        <h1 style="text-align: center; margin-bottom: 20px; font-size: 1.2rem;">Active Users (Live)</h1>
+        <div style="overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.2);">
+                        <th style="padding: 12px; text-align: left; color: #ccc;">Device ID</th>
+                        <th style="padding: 12px; text-align: left; color: #ccc;">Username</th>
+                        <th style="padding: 12px; text-align: left; color: #ccc;">Channel</th>
+                        <th style="padding: 12px; text-align: left; color: #ccc;">IP Address</th>
+                        <th style="padding: 12px; text-align: left; color: #ccc;">ISP</th>
+                        <th style="padding: 12px; text-align: left; color: #ccc;">Last Active</th>
+                    </tr>
+                </thead>
+                <tbody id="active-users-list">
+                    <tr><td colspan="6" style="padding: 12px; text-align: center; color: #aaa;">Waiting for data...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="status" id="status" style="margin-top: 30px;">Waiting for data...</div>
+
+    <script>
+        const FIREBASE_URL = "https://iptvindiaxtreamplayer-default-rtdb.asia-southeast1.firebasedatabase.app/live_users.json";
+        
+        const LIVE_THRESHOLD_MS = 120000; // 2 minutes
+        const DAILY_THRESHOLD_MS = 86400000; // 24 hours
+
+        const ispCache = {};
+        const pendingIspRequests = new Set();
+
+        async function fetchIsp(ip, elementIdPrefix) {
+            if (pendingIspRequests.has(ip)) return;
+            pendingIspRequests.add(ip);
+            
+            try {
+                // Try ip-api.com first (HTTP only, might fail on HTTPS sites, but good for local/http)
+                const response = await fetch(`http://ip-api.com/json/${ip}?fields=isp,org`);
+                const data = await response.json();
+                const isp = data.isp || data.org || 'Unknown';
+                ispCache[ip] = isp;
+                
+                const elements = document.querySelectorAll(`[id^="${elementIdPrefix}"]`);
+                elements.forEach(el => el.innerText = isp);
+            } catch (e) {
+                console.error("Error fetching ISP for", ip, e);
+                // Fallback to geojs which supports HTTPS
+                try {
+                    const fallbackResponse = await fetch(`https://get.geojs.io/v1/ip/geo/${ip}.json`);
+                    const fallbackData = await fallbackResponse.json();
+                    const isp = fallbackData.organization_name || fallbackData.organization || 'Unknown';
+                    ispCache[ip] = isp;
+                    
+                    const elements = document.querySelectorAll(`[id^="${elementIdPrefix}"]`);
+                    elements.forEach(el => el.innerText = isp);
+                } catch (fallbackErr) {
+                    ispCache[ip] = 'Unknown';
+                    const elements = document.querySelectorAll(`[id^="${elementIdPrefix}"]`);
+                    elements.forEach(el => el.innerText = 'Unknown');
+                }
+            } finally {
+                pendingIspRequests.delete(ip);
+            }
+        }
+
+        async function fetchAnalytics() {
+            try {
+                document.getElementById('status').innerText = "Refreshing...";
+                const response = await fetch(FIREBASE_URL);
+                const data = await response.json();
+                
+                if (!data) {
+                    document.getElementById('live-count').innerText = "0";
+                    document.getElementById('daily-count').innerText = "0";
+                    document.getElementById('total-count').innerText = "0";
+                    document.getElementById('status').innerText = "Last updated: Just now";
+                    return;
+                }
+
+                const now = Date.now();
+                let liveCount = 0;
+                let dailyCount = 0;
+                let totalCount = 0;
+
+                let activeUsersHtml = '';
+                const activeUsersList = [];
+
+                for (const deviceId in data) {
+                    const user = data[deviceId];
+                    if (user && user.last_active) {
+                        totalCount++; // Count every unique device
+
+                        const timeSinceLastActive = now - user.last_active;
+                        
+                        if (timeSinceLastActive < LIVE_THRESHOLD_MS) {
+                            liveCount++;
+                            activeUsersList.push({ deviceId, ...user });
+                        }
+                        
+                        if (timeSinceLastActive < DAILY_THRESHOLD_MS) {
+                            dailyCount++;
+                        }
+                    }
+                }
+
+                // Sort by most recently active
+                activeUsersList.sort((a, b) => b.last_active - a.last_active);
+
+                for (const user of activeUsersList) {
+                    const displayIp = user.ip ? user.ip : 'Not Available';
+                    const displayUsername = user.username && user.username.trim() !== '' ? user.username : 'Unknown';
+                    const displayChannel = user.channel && user.channel.trim() !== '' ? user.channel : 'None';
+                    const lastActiveDate = new Date(user.last_active).toLocaleTimeString();
+                    
+                    const safeIpId = user.ip ? user.ip.replace(/\./g, '-') : 'unknown';
+                    let ispHtml = 'Loading...';
+                    if (displayIp !== 'Not Available') {
+                        if (ispCache[displayIp]) {
+                            ispHtml = ispCache[displayIp];
+                        } else {
+                            fetchIsp(displayIp, `isp-${safeIpId}`);
+                        }
+                    } else {
+                        ispHtml = 'N/A';
+                    }
+
+                    activeUsersHtml += `
+                        <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
+                            <td style="padding: 12px; font-family: monospace; color: #ccc;">${user.deviceId}</td>
+                            <td style="padding: 12px; color: #ff9900;">${displayUsername}</td>
+                            <td style="padding: 12px; color: #00ccff;">${displayChannel}</td>
+                            <td style="padding: 12px; color: #00ff88;">${displayIp}</td>
+                            <td style="padding: 12px; color: #e0e0e0;" id="isp-${safeIpId}-${user.deviceId}">${ispHtml}</td>
+                            <td style="padding: 12px; color: #aaa;">${lastActiveDate}</td>
+                        </tr>
+                    `;
+                }
+
+                document.getElementById('active-users-list').innerHTML = activeUsersHtml || '<tr><td colspan="6" style="padding: 12px; text-align: center; color: #aaa;">No active users</td></tr>';
+
+                document.getElementById('live-count').innerText = liveCount;
+                document.getElementById('daily-count').innerText = dailyCount;
+                document.getElementById('total-count').innerText = totalCount;
+                document.getElementById('status').innerText = "Last updated: Just now (Auto-refreshes every 10s)";
+
+            } catch (error) {
+                console.error("Error fetching data:", error);
+                document.getElementById('status').innerText = "Error connecting to database.";
+            }
+        }
+
+        // Fetch immediately on load
+        fetchAnalytics();
+
+        // Fetch every 10 seconds
+        setInterval(fetchAnalytics, 10000);
+    </script>
+</body>
+</html>
